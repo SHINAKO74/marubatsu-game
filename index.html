@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>○×ゲーム - 神モード実装版</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0500; } /* さらに深い黒へ */
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const LINES = [
+  [0,1,2],[3,4,5],[6,7,8],
+  [0,3,6],[1,4,7],[2,5,8],
+  [0,4,8],[2,4,6],
+];
+
+const calculateWinner = (markValues) => {
+  for (let [a,b,c] of LINES) {
+    if (markValues[a] && markValues[a] === markValues[b] && markValues[a] === markValues[c])
+      return { winner: markValues[a], line: [a,b,c] };
+  }
+  return null;
+};
+
+const computeAge = (s, pts) => pts[s.mark] - s.placedAt;
+
+const getEffective = (squares, pts) =>
+  squares.map(s => (!s || computeAge(s, pts) >= 3) ? null : s);
+
+const getMarkValues = (squares) => squares.map(s => s ? s.mark : null);
+
+// --- 最強(Minimax)ロジック ---
+const minimax = (board, pts, depth, isMaximizing, alpha, beta) => {
+  const agedBoard = getEffective(board, pts);
+  const markValues = getMarkValues(agedBoard);
+  const result = calculateWinner(markValues);
+
+  if (result?.winner === "×") return 10 - depth;
+  if (result?.winner === "〇") return depth - 10;
+  if (depth >= 6) return 0; // 探索の深さ制限
+
+  const available = agedBoard.map((s, i) => s ? null : i).filter(i => i !== null);
+  if (available.length === 0) return 0;
+
+  if (isMaximizing) {
+    let maxEval = -Infinity;
+    for (let i of available) {
+      const nextPts = { ...pts, "×": pts["×"] + 1 };
+      const nextBoard = agedBoard.slice();
+      nextBoard[i] = { mark: "×", placedAt: nextPts["×"] };
+      const evaluation = minimax(nextBoard, nextPts, depth + 1, false, alpha, beta);
+      maxEval = Math.max(maxEval, evaluation);
+      alpha = Math.max(alpha, evaluation);
+      if (beta <= alpha) break;
+    }
+    return maxEval;
+  } else {
+    let minEval = Infinity;
+    for (let i of available) {
+      const nextPts = { ...pts, "〇": pts["〇"] + 1 };
+      const nextBoard = agedBoard.slice();
+      nextBoard[i] = { mark: "〇", placedAt: nextPts["〇"] };
+      const evaluation = minimax(nextBoard, nextPts, depth + 1, true, alpha, beta);
+      minEval = Math.min(minEval, evaluation);
+      beta = Math.min(beta, evaluation);
+      if (beta <= alpha) break;
+    }
+    return minEval;
+  }
+};
+
+const cpuMove = (squares, playerTurns, diff) => {
+  const aged = getEffective(squares, playerTurns);
+  const available = aged.map((s, i) => s ? null : i).filter(i => i !== null);
+  if (available.length === 0) return null;
+
+  // --- 最強モード ---
+  if (diff === 'god') {
+    let bestScore = -Infinity;
+    let move = available[0];
+    
+    // 最初の1手目は中央か角をランダムに（高速化のため）
+    if (playerTurns["×"] === 0 && available.includes(4)) return 4;
+
+    for (let i of available) {
+      const nextPts = { ...playerTurns, "×": playerTurns["×"] + 1 };
+      const nextBoard = aged.slice();
+      nextBoard[i] = { mark: "×", placedAt: nextPts["×"] };
+      const score = minimax(nextBoard, nextPts, 0, false, -Infinity, Infinity);
+      if (score > bestScore) {
+        bestScore = score;
+        move = i;
+      }
+    }
+    return move;
+  }
+
+  // --- 中級・初級（以前のロジック） ---
+  const myMark = "×";
+  const opMark = "〇";
+  if (diff === 'weak' && Math.random() < 0.2) return available[Math.floor(Math.random() * available.length)];
+
+  const findWin = (m) => {
+    const p = { ...playerTurns, [m]: playerTurns[m] + 1 };
+    const a = getEffective(squares, p);
+    for (let i of a.map((s, idx) => s ? null : idx).filter(idx => idx !== null)) {
+      const t = a.slice(); t[i] = { mark: m, placedAt: p[m] };
+      if (calculateWinner(getMarkValues(t))) return i;
+    }
+    return null;
+  };
+
+  const win = findWin(myMark);
+  if (win !== null) return win;
+  const block = findWin(opMark);
+  if (block !== null && (diff !== 'weak' || Math.random() > 0.4)) return block;
+
+  const priority = [4, 0, 2, 6, 8, 1, 3, 5, 7];
+  for (let i of priority) if (available.includes(i)) return i;
+  return available[0];
+};
+
+// UI Components (Styles and App)
+const btnStyle = (active, color = "#e8c97e") => ({
+  padding: "8px 16px",
+  background: active ? `rgba(${color === "#ff0000" ? "255,0,0" : "232,201,126"}, 0.2)` : "transparent",
+  border: `2px solid ${active ? color : "rgba(232,201,126,0.2)"}`,
+  borderRadius: "50px",
+  color: active ? color : "#7a6a3a",
+  fontSize: "0.8rem",
+  cursor: "pointer",
+  transition: "all 0.3s",
+  fontWeight: active ? "900" : "normal",
+  textShadow: active && color === "#ff0000" ? "0 0 10px #ff0000" : "none",
+});
+
+function App() {
+  const [mode, setMode] = useState(null);
+  const [difficulty, setDifficulty] = useState('normal');
+  const [squares, setSquares] = useState(Array(9).fill(null));
+  const [isCircle, setIsCircle] = useState(true);
+  const [scores, setScores] = useState({ "〇": 0, "×": 0 });
+  const [playerTurns, setPlayerTurns] = useState({ "〇": 0, "×": 0 });
+  const [winner, setWinner] = useState(null);
+  const [cpuThinking, setCpuThinking] = useState(false);
+
+  const handleClick = (i) => {
+    if (winner || cpuThinking || (mode === "cpu" && !isCircle)) return;
+    const mark = isCircle ? "〇" : "×";
+    const newPts = { ...playerTurns, [mark]: playerTurns[mark] + 1 };
+    const aged = getEffective(squares, newPts);
+    if (aged[i]) return;
+    const next = aged.slice();
+    next[i] = { mark, placedAt: newPts[mark] };
+    const result = calculateWinner(getMarkValues(next));
+    if (result) setScores(s => ({ ...s, [result.winner]: s[result.winner] + 1 }));
+    setWinner(result);
+    setSquares(next);
+    setPlayerTurns(newPts);
+    if (!result) setIsCircle(!isCircle);
+  };
+
+  useEffect(() => {
+    if (mode !== "cpu" || isCircle || winner) return;
+    setCpuThinking(true);
+    const delay = difficulty === 'god' ? 800 : 500;
+    const timer = setTimeout(() => {
+      setSquares(sq => {
+        setPlayerTurns(pts => {
+          const idx = cpuMove(sq, pts, difficulty);
+          if (idx === null) { setCpuThinking(false); return pts; }
+          const newPts = { ...pts, "×": pts["×"] + 1 };
+          const aged = getEffective(sq, newPts);
+          const next = aged.slice();
+          next[idx] = { mark: "×", placedAt: newPts["×"] };
+          const result = calculateWinner(getMarkValues(next));
+          if (result) {
+            setScores(s => ({ ...s, [result.winner]: s[result.winner] + 1 }));
+            setWinner(result);
+          } else {
+            setIsCircle(true);
+          }
+          setSquares(next);
+          setCpuThinking(false);
+          return newPts;
+        });
+        return sq;
+      });
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [isCircle, mode, winner, difficulty]);
+
+  const reset = () => {
+    setSquares(Array(9).fill(null));
+    setIsCircle(true);
+    setPlayerTurns({ "〇": 0, "×": 0 });
+    setWinner(null);
+    setCpuThinking(false);
+  };
+
+  const effectiveSquares = getEffective(squares, playerTurns);
+  const winLine = winner?.line || [];
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#0a0500",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      fontFamily: "'Noto Serif JP', serif", padding: "20px",
+    }}>
+      <h1 style={{ color:"#e8c97e", fontSize:"2.5rem", letterSpacing:"0.3em", marginBottom:"20px" }}>○×ゲーム</h1>
+
+      <div style={{ display:"flex", gap:"10px", marginBottom:"20px" }}>
+        <button style={btnStyle(mode === "pvp")} onClick={() => {setMode("pvp"); reset();}}>👥 対人</button>
+        <button style={btnStyle(mode === "cpu")} onClick={() => {setMode("cpu"); reset();}}>🤖 対CPU</button>
+      </div>
+
+      {mode === "cpu" && (
+        <div style={{ display:"flex", gap:"8px", marginBottom:"30px", borderBottom:"1px solid #333", paddingBottom:"15px" }}>
+          <button style={btnStyle(difficulty === 'weak', "#aaa")} onClick={() => {setDifficulty('weak'); reset();}}>初級</button>
+          <button style={btnStyle(difficulty === 'normal', "#e8c97e")} onClick={() => {setDifficulty('normal'); reset();}}>中級</button>
+          <button style={btnStyle(difficulty === 'god', "#ff0000")} onClick={() => {setDifficulty('god'); reset();}}>最強</button>
+        </div>
+      )}
+
+      {mode && (<>
+        <div style={{ display:"flex", gap:"40px", marginBottom:"20px", color:"#e8c97e" }}>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ color: "#ff4444" }}>〇 {mode === "cpu" ? "自分" : "先手"}</div>
+            <div style={{ fontSize:"1.5rem" }}>{scores["〇"]}</div>
+          </div>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ color: "#4499ff" }}>× {mode === "cpu" ? "CPU" : "後手"}</div>
+            <div style={{ fontSize:"1.5rem" }}>{scores["×"]}</div>
+          </div>
+        </div>
+
+        <div style={{ color:"#ccc", height:"30px" }}>
+          {winner ? `${winner.winner} の勝ち！` : cpuThinking ? "思考中..." : isCircle ? "〇 の番" : "× の番"}
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:"10px" }}>
+          {effectiveSquares.map((sq, i) => {
+            const age = sq ? computeAge(sq, playerTurns) : 0;
+            return (
+              <button key={i} onClick={() => handleClick(i)} style={{
+                width:"90px", height:"90px",
+                background: winLine.includes(i) ? "rgba(232,201,126,0.3)" : "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(232,201,126,0.2)",
+                fontSize:"2.5rem", color: sq?.mark === "〇" ? "#ff4444" : "#4499ff",
+                opacity: sq ? (age === 0 ? 1 : age === 1 ? 0.6 : 0.3) : 1,
+                cursor: (sq || winner || cpuThinking) ? "default" : "pointer",
+                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center"
+              }}>
+                {sq?.mark}
+                {sq && !winner && (
+                  <div style={{ display:"flex", gap:"2px" }}>
+                    {[0,1,2].map(d => (
+                      <div key={d} style={{ width:"4px", height:"4px", borderRadius:"50%", background: d < (3-age) ? (sq.mark==="〇"?"#ff4444":"#4499ff") : "#333" }} />
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <button onClick={reset} style={{ marginTop:"30px", background:"none", border:"1px solid #e8c97e", color:"#e8c97e", padding:"10px 20px", cursor:"pointer" }}>リセット</button>
+      </>)}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
