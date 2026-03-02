@@ -18,7 +18,7 @@
 <script type="text/babel">
 const { useState, useEffect } = React;
 
-// --- 音声エンジン (Web Audio API) ---
+//音声
 const AudioEngine = {
   ctx: null,
   init() {
@@ -59,7 +59,7 @@ const computeAge = (s, pts) => pts[s.mark] - s.placedAt;
 const getEffective = (sq, pts) => sq.map(s => (!s || computeAge(s, pts) >= 3) ? null : s);
 const getMarkValues = (sq) => sq.map(s => s ? s.mark : null);
 
-// --- 最強(Minimax)ロジック ---
+// 上級
 const minimax = (board, pts, depth, isMaximizing, alpha, beta) => {
   const agedBoard = getEffective(board, pts);
   const markValues = getMarkValues(agedBoard);
@@ -102,12 +102,11 @@ const cpuMove = (squares, playerTurns, diff) => {
   const available = aged.map((s, i) => s ? null : i).filter(i => i !== null);
   if (available.length === 0) return null;
 
-  // --- 神モード (Minimax + Randomness) ---
   if (diff === 'god') {
     let bestScore = -Infinity;
     let moves = [];
     
-    // 初手のバリエーション
+    // 初手
     if (playerTurns["×"] === 0) {
       if (available.includes(4)) return 4;
       const corners = [0, 2, 6, 8].filter(c => available.includes(c));
@@ -158,7 +157,7 @@ const cpuMove = (squares, playerTurns, diff) => {
     }
   }
 
-  // 優先順位グループ内でのランダム化
+  // ランダム化
   const priorityGroups = [[4], [0, 2, 6, 8], [1, 3, 5, 7]];
   for (let group of priorityGroups) {
     const candidates = group.filter(i => available.includes(i));
@@ -351,3 +350,4 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
 </body>
 </html>
+
