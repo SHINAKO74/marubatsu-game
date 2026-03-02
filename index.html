@@ -3,52 +3,70 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>○×ゲーム - 神モード実装版</title>
+<title>○×ゲーム</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700;900&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #0a0500; } /* さらに深い黒へ */
+  body { background: #0a0500; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect } = React;
 
-const LINES = [
-  [0,1,2],[3,4,5],[6,7,8],
-  [0,3,6],[1,4,7],[2,5,8],
-  [0,4,8],[2,4,6],
-];
+// --- 音声エンジン (Web Audio API) ---
+const AudioEngine = {
+  ctx: null,
+  init() {
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+  },
+  playTone(freq, type, duration, vol = 0.1) {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+    gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + duration);
+  },
+  playMove(isCircle) {
+    this.playTone(isCircle ? 880 : 440, 'sine', 0.1, 0.05);
+  },
+  playWin() {
+    [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => {
+      setTimeout(() => this.playTone(f, 'triangle', 0.6, 0.08), i * 120);
+    });
+  }
+};
 
-const calculateWinner = (markValues) => {
+const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+const calculateWinner = (mv) => {
   for (let [a,b,c] of LINES) {
-    if (markValues[a] && markValues[a] === markValues[b] && markValues[a] === markValues[c])
-      return { winner: markValues[a], line: [a,b,c] };
+    if (mv[a] && mv[a] === mv[b] && mv[a] === mv[c]) return { winner: mv[a], line: [a,b,c] };
   }
   return null;
 };
-
 const computeAge = (s, pts) => pts[s.mark] - s.placedAt;
-
-const getEffective = (squares, pts) =>
-  squares.map(s => (!s || computeAge(s, pts) >= 3) ? null : s);
-
-const getMarkValues = (squares) => squares.map(s => s ? s.mark : null);
+const getEffective = (sq, pts) => sq.map(s => (!s || computeAge(s, pts) >= 3) ? null : s);
+const getMarkValues = (sq) => sq.map(s => s ? s.mark : null);
 
 // --- 最強(Minimax)ロジック ---
 const minimax = (board, pts, depth, isMaximizing, alpha, beta) => {
   const agedBoard = getEffective(board, pts);
   const markValues = getMarkValues(agedBoard);
   const result = calculateWinner(markValues);
-
   if (result?.winner === "×") return 10 - depth;
   if (result?.winner === "〇") return depth - 10;
-  if (depth >= 6) return 0; // 探索の深さ制限
-
+  if (depth >= 6) return 0;
   const available = agedBoard.map((s, i) => s ? null : i).filter(i => i !== null);
   if (available.length === 0) return 0;
 
@@ -84,53 +102,73 @@ const cpuMove = (squares, playerTurns, diff) => {
   const available = aged.map((s, i) => s ? null : i).filter(i => i !== null);
   if (available.length === 0) return null;
 
-  // --- 最強モード ---
+  // --- 神モード (Minimax + Randomness) ---
   if (diff === 'god') {
     let bestScore = -Infinity;
-    let move = available[0];
+    let moves = [];
     
-    // 最初の1手目は中央か角をランダムに（高速化のため）
-    if (playerTurns["×"] === 0 && available.includes(4)) return 4;
+    // 初手のバリエーション
+    if (playerTurns["×"] === 0) {
+      if (available.includes(4)) return 4;
+      const corners = [0, 2, 6, 8].filter(c => available.includes(c));
+      return corners[Math.floor(Math.random() * corners.length)];
+    }
 
     for (let i of available) {
       const nextPts = { ...playerTurns, "×": playerTurns["×"] + 1 };
       const nextBoard = aged.slice();
       nextBoard[i] = { mark: "×", placedAt: nextPts["×"] };
       const score = minimax(nextBoard, nextPts, 0, false, -Infinity, Infinity);
+      
       if (score > bestScore) {
         bestScore = score;
-        move = i;
+        moves = [i];
+      } else if (score === bestScore) {
+        moves.push(i);
       }
     }
-    return move;
+    return moves[Math.floor(Math.random() * moves.length)];
   }
 
-  // --- 中級・初級（以前のロジック） ---
+  // --- 初級・中級ロジック ---
   const myMark = "×";
   const opMark = "〇";
-  if (diff === 'weak' && Math.random() < 0.2) return available[Math.floor(Math.random() * available.length)];
 
-  const findWin = (m) => {
-    const p = { ...playerTurns, [m]: playerTurns[m] + 1 };
-    const a = getEffective(squares, p);
-    for (let i of a.map((s, idx) => s ? null : idx).filter(idx => idx !== null)) {
-      const t = a.slice(); t[i] = { mark: m, placedAt: p[m] };
-      if (calculateWinner(getMarkValues(t))) return i;
-    }
-    return null;
+  const findWinningMoves = (mark) => {
+    const nextPts = { ...playerTurns, [mark]: playerTurns[mark] + 1 };
+    const currentAged = getEffective(squares, nextPts);
+    return available.filter(i => {
+      const nextBoard = currentAged.slice();
+      nextBoard[i] = { mark: mark, placedAt: nextPts[mark] };
+      return calculateWinner(getMarkValues(nextBoard));
+    });
   };
 
-  const win = findWin(myMark);
-  if (win !== null) return win;
-  const block = findWin(opMark);
-  if (block !== null && (diff !== 'weak' || Math.random() > 0.4)) return block;
+  if (diff === 'weak' && Math.random() < 0.3) {
+    return available[Math.floor(Math.random() * available.length)];
+  }
 
-  const priority = [4, 0, 2, 6, 8, 1, 3, 5, 7];
-  for (let i of priority) if (available.includes(i)) return i;
-  return available[0];
+  const winMoves = findWinningMoves(myMark);
+  if (winMoves.length > 0) return winMoves[Math.floor(Math.random() * winMoves.length)];
+
+  const blockMoves = findWinningMoves(opMark);
+  if (blockMoves.length > 0) {
+    if (diff !== 'weak' || Math.random() > 0.4) {
+      return blockMoves[Math.floor(Math.random() * blockMoves.length)];
+    }
+  }
+
+  // 優先順位グループ内でのランダム化
+  const priorityGroups = [[4], [0, 2, 6, 8], [1, 3, 5, 7]];
+  for (let group of priorityGroups) {
+    const candidates = group.filter(i => available.includes(i));
+    if (candidates.length > 0) {
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+  }
+  return available[Math.floor(Math.random() * available.length)];
 };
 
-// UI Components (Styles and App)
 const btnStyle = (active, color = "#e8c97e") => ({
   padding: "8px 16px",
   background: active ? `rgba(${color === "#ff0000" ? "255,0,0" : "232,201,126"}, 0.2)` : "transparent",
@@ -154,16 +192,25 @@ function App() {
   const [winner, setWinner] = useState(null);
   const [cpuThinking, setCpuThinking] = useState(false);
 
+  const initAudio = () => AudioEngine.init();
+
   const handleClick = (i) => {
+    initAudio();
     if (winner || cpuThinking || (mode === "cpu" && !isCircle)) return;
     const mark = isCircle ? "〇" : "×";
     const newPts = { ...playerTurns, [mark]: playerTurns[mark] + 1 };
     const aged = getEffective(squares, newPts);
     if (aged[i]) return;
+
+    AudioEngine.playMove(isCircle);
+
     const next = aged.slice();
     next[i] = { mark, placedAt: newPts[mark] };
     const result = calculateWinner(getMarkValues(next));
-    if (result) setScores(s => ({ ...s, [result.winner]: s[result.winner] + 1 }));
+    if (result) {
+      setScores(s => ({ ...s, [result.winner]: s[result.winner] + 1 }));
+      AudioEngine.playWin();
+    }
     setWinner(result);
     setSquares(next);
     setPlayerTurns(newPts);
@@ -179,6 +226,9 @@ function App() {
         setPlayerTurns(pts => {
           const idx = cpuMove(sq, pts, difficulty);
           if (idx === null) { setCpuThinking(false); return pts; }
+          
+          AudioEngine.playMove(false);
+
           const newPts = { ...pts, "×": pts["×"] + 1 };
           const aged = getEffective(sq, newPts);
           const next = aged.slice();
@@ -187,6 +237,7 @@ function App() {
           if (result) {
             setScores(s => ({ ...s, [result.winner]: s[result.winner] + 1 }));
             setWinner(result);
+            AudioEngine.playWin();
           } else {
             setIsCircle(true);
           }
@@ -201,6 +252,7 @@ function App() {
   }, [isCircle, mode, winner, difficulty]);
 
   const reset = () => {
+    initAudio();
     setSquares(Array(9).fill(null));
     setIsCircle(true);
     setPlayerTurns({ "〇": 0, "×": 0 });
@@ -221,15 +273,15 @@ function App() {
       <h1 style={{ color:"#e8c97e", fontSize:"2.5rem", letterSpacing:"0.3em", marginBottom:"20px" }}>○×ゲーム</h1>
 
       <div style={{ display:"flex", gap:"10px", marginBottom:"20px" }}>
-        <button style={btnStyle(mode === "pvp")} onClick={() => {setMode("pvp"); reset();}}>👥 対人</button>
-        <button style={btnStyle(mode === "cpu")} onClick={() => {setMode("cpu"); reset();}}>🤖 対CPU</button>
+        <button style={btnStyle(mode === "pvp")} onClick={() => {setMode("pvp"); reset();}}>対人</button>
+        <button style={btnStyle(mode === "cpu")} onClick={() => {setMode("cpu"); reset();}}>対CPU</button>
       </div>
 
       {mode === "cpu" && (
         <div style={{ display:"flex", gap:"8px", marginBottom:"30px", borderBottom:"1px solid #333", paddingBottom:"15px" }}>
           <button style={btnStyle(difficulty === 'weak', "#aaa")} onClick={() => {setDifficulty('weak'); reset();}}>初級</button>
           <button style={btnStyle(difficulty === 'normal', "#e8c97e")} onClick={() => {setDifficulty('normal'); reset();}}>中級</button>
-          <button style={btnStyle(difficulty === 'god', "#ff0000")} onClick={() => {setDifficulty('god'); reset();}}>最強</button>
+          <button style={btnStyle(difficulty === 'god', "#ff0000")} onClick={() => {setDifficulty('god'); reset();}}>上級</button>
         </div>
       )}
 
@@ -252,24 +304,38 @@ function App() {
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:"10px" }}>
           {effectiveSquares.map((sq, i) => {
             const age = sq ? computeAge(sq, playerTurns) : 0;
+            const markOpacity = sq ? (age === 0 ? 1 : age === 1 ? 0.6 : 0.3) : 1;
+
             return (
               <button key={i} onClick={() => handleClick(i)} style={{
                 width:"90px", height:"90px",
                 background: winLine.includes(i) ? "rgba(232,201,126,0.3)" : "rgba(255,255,255,0.05)",
                 border: "1px solid rgba(232,201,126,0.2)",
-                fontSize:"2.5rem", color: sq?.mark === "〇" ? "#ff4444" : "#4499ff",
-                opacity: sq ? (age === 0 ? 1 : age === 1 ? 0.6 : 0.3) : 1,
                 cursor: (sq || winner || cpuThinking) ? "default" : "pointer",
-                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center"
+                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                outline: "none", position: "relative"
               }}>
-                {sq?.mark}
-                {sq && !winner && (
-                  <div style={{ display:"flex", gap:"2px" }}>
-                    {[0,1,2].map(d => (
-                      <div key={d} style={{ width:"4px", height:"4px", borderRadius:"50%", background: d < (3-age) ? (sq.mark==="〇"?"#ff4444":"#4499ff") : "#333" }} />
-                    ))}
-                  </div>
-                )}
+                <div style={{ 
+                  opacity: markOpacity, 
+                  display: "flex", 
+                  flexDirection: "column", 
+                  alignItems: "center",
+                  transition: "opacity 0.3s ease" 
+                }}>
+                  <span style={{ fontSize:"2.5rem", color: sq?.mark === "〇" ? "#ff4444" : "#4499ff", lineHeight: 1 }}>
+                    {sq?.mark}
+                  </span>
+                  {sq && !winner && (
+                    <div style={{ display:"flex", gap:"2px", marginTop: "4px" }}>
+                      {[0,1,2].map(d => (
+                        <div key={d} style={{ 
+                          width:"4px", height:"4px", borderRadius:"50%", 
+                          background: d < (3-age) ? (sq.mark==="〇"?"#ff4444":"#4499ff") : "#333" 
+                        }} />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </button>
             );
           })}
