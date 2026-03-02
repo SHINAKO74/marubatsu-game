@@ -66,7 +66,7 @@ const minimax = (board, pts, depth, isMaximizing, alpha, beta) => {
   const result = calculateWinner(markValues);
   if (result?.winner === "×") return 10 - depth;
   if (result?.winner === "〇") return depth - 10;
-  if (depth >= 8) return 0;
+  if (depth >= 10) return 0;
   const available = agedBoard.map((s, i) => s ? null : i).filter(i => i !== null);
   if (available.length === 0) return 0;
 
@@ -350,5 +350,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
 </body>
 </html>
+
 
 
